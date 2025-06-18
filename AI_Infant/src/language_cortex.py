@@ -1,7 +1,7 @@
 # full, runnable code here
 import hashlib
 import random
-from collections import Counter
+from collections import Counter, deque
 
 from .neural_fabric import NeuralFabric
 from .relational_cortex import RelationalCortex
@@ -17,12 +17,12 @@ class LanguageCortex:
         self.used_neurons = set()
         self.word_to_pattern_map = {}
         if not self.language_neurons: raise ValueError(f"Zone '{zone_name}' has no neurons.")
-        print(f"LanguageCortex initialized and connected to RelationalCortex.")
+        print("LanguageCortex initialized and connected to RelationalCortex.")
 
     def _get_or_create_pattern_for_word(self, word: str) -> tuple[frozenset | None, str | None]:
         if word in self.word_to_pattern_map:
             pattern = self.word_to_pattern_map[word]
-            symbol = self.fabric.relation._get_symbol_for_pattern(pattern)
+            symbol = self.relational_cortex._get_symbol_for_pattern(pattern)
             return pattern, symbol
         
         word_hash = hashlib.sha256(word.encode()).hexdigest()
@@ -42,28 +42,39 @@ class LanguageCortex:
         self.word_to_pattern_map[word] = frozen_pattern
         return frozen_pattern, symbol
 
-    def perceive_text_block(self, text_block: str) -> tuple[set, frozenset | None]:
+    def perceive_text_block(self, text_block: str) -> tuple[set, frozenset | None, set]:
         print(f"\n--- Perceiving and Analyzing text block... ---")
         sentences = text_block.replace('\n', ' ').replace(';','.').replace('!','.').replace('?','.').split('.')
         all_perceived_patterns = set()
+        all_event_patterns = set()
         word_counter = Counter()
+        
+        # --- START OF FINAL FIX: Robust Sliding Window with Stop Word Removal ---
+        stop_words = {'a', 'an', 'the'}
 
         for sentence in sentences:
-            words = [w for w in sentence.lower().strip().split() if w]
+            # Pre-process to remove stop words
+            words = [w for w in sentence.lower().strip().split() if w and w not in stop_words]
             if not words: continue
             
             word_counter.update(w for w in words if len(w) > 3)
+            
+            # Use a deque for the sliding window
+            word_patterns_in_sentence = deque(maxlen=3)
 
             for word in words:
                 pattern, _ = self._get_or_create_pattern_for_word(word)
                 if not pattern: continue
-                
                 all_perceived_patterns.add(pattern)
-                self.fabric.activate_pattern(pattern, 1.1)
-                self.fabric.step_simulation()
-                # The relational cortex passively observes the sequence of firings
-                self.relational_cortex.observe_activation(pattern)
-                self.relational_cortex.analyze_sequence_for_relation()
+                word_patterns_in_sentence.append(pattern)
+                
+                # If the window is full, analyze the triad for a relationship
+                if len(word_patterns_in_sentence) == 3:
+                    subject, verb, obj = list(word_patterns_in_sentence)
+                    event_pattern = self.relational_cortex.create_and_integrate_relation(subject, verb, obj)
+                    if event_pattern:
+                        all_event_patterns.add(frozenset(event_pattern))
+            # --- END OF FINAL FIX ---
 
         main_idea_pattern = None
         if word_counter:
@@ -71,5 +82,5 @@ class LanguageCortex:
             main_idea_pattern, _ = self._get_or_create_pattern_for_word(most_common_word)
             print(f"  - Heuristic main idea of text: '{most_common_word}'")
         
-        print(f"--- Text perception complete. Perceived {len(all_perceived_patterns)} unique concepts. ---")
-        return all_perceived_patterns, main_idea_pattern
+        print(f"--- Text perception complete. ---")
+        return all_perceived_patterns, main_idea_pattern, all_event_patterns

@@ -5,49 +5,42 @@ import openai
 class KnowledgeOracle:
     """
     Acts as the AI's interface to an external Large Language Model (LLM).
-    It consults this "oracle" only when its own knowledge is insufficient.
-    This follows the principle of least action by using an energy-intensive
-    tool only as a last resort.
+    This version is configured to use the high-speed Groq API.
     """
     def __init__(self):
-        self.api_key = os.environ.get("DEEPSEEK_API_KEY")
+        # Look for the GROQ_API_KEY environment variable
+        self.api_key = os.environ.get("GROQ_API_KEY")
         if not self.api_key:
-            print("WARNING: DEEPSEEK_API_KEY environment variable not set. Knowledge Oracle will be disabled.")
+            print("WARNING: GROQ_API_KEY environment variable not set. Knowledge Oracle will be disabled.")
             self.client = None
         else:
-            # The 'openai' library is a standard client for many LLM APIs,
-            # including DeepSeek, by changing the base_url.
+            # The 'openai' library is used to connect to Groq's OpenAI-compatible endpoint
             self.client = openai.OpenAI(
                 api_key=self.api_key,
-                base_url="https://api.deepseek.com"
+                base_url="https://api.groq.com/openai/v1"
             )
-            print("KnowledgeOracle initialized and connected to DeepSeek API.")
+            print("KnowledgeOracle initialized and connected to Groq API.")
 
     def query_llm(self, prompt: str) -> str | None:
         """
         Sends a prompt to the external LLM and returns its response.
-
-        Args:
-            prompt (str): The question to ask the oracle.
-
-        Returns:
-            str | None: The textual response from the LLM, or None if an error occurred.
         """
         if not self.client:
             print("ORACLE_QUERY_FAIL: Oracle is disabled (API key not set).")
             return None
 
-        print(f"--- Oracle Query: Sending prompt... ---")
+        print(f"--- Oracle Query (Groq): Sending prompt... ---")
         print(f"  > {prompt}")
         
         try:
             chat_completion = self.client.chat.completions.create(
-                model="deepseek-chat",
+                # Use a model available on Groq, Llama 3 8B is excellent and fast
+                model="llama3-8b-8192",
                 messages=[
-                    {"role": "system", "content": "You are a helpful assistant. Provide a concise, single-sentence explanation."},
+                    {"role": "system", "content": "You are a helpful assistant. Provide a very concise, single-sentence explanation suitable for a learning AI."},
                     {"role": "user", "content": prompt},
                 ],
-                max_tokens=50,
+                max_tokens=60, # Keep responses short and to the point
                 temperature=0.7,
             )
             response = chat_completion.choices[0].message.content

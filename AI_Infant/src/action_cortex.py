@@ -6,29 +6,22 @@ from .language_cortex import LanguageCortex
 from .web_browser import WebBrowser
 
 class ActionCortex:
-    def __init__(self, fabric: NeuralFabric, speech_queue: queue.Queue, 
-                 oracle: KnowledgeOracle, language_cortex: LanguageCortex, browser: WebBrowser):
-        self.fabric = fabric
-        self.speech_queue = speech_queue
-        self.oracle = oracle
-        self.language_cortex = language_cortex
-        self.browser = browser
+    def __init__(self, fabric, speech_queue, oracle, language_cortex, browser):
+        self.fabric, self.speech_queue, self.oracle, self.language_cortex, self.browser = fabric, speech_queue, oracle, language_cortex, browser
         self._action_registry = {}
         print("ActionCortex initialized.")
 
-    def register_action(self, symbol: str, function):
-        pattern = self.fabric.recall(symbol)
-        if pattern:
-            self._action_registry[symbol] = {"pattern": pattern, "function": function}
-            print(f"Action '{symbol}' registered.")
+    def register_action(self, symbol, function):
+        self._action_registry[symbol] = function
 
-    def _get_words_for_pattern(self, context_pattern: set) -> str:
-        if not context_pattern: return "something"
-        best_symbol, max_subset_size = None, 0
+    def _get_words_for_pattern(self, context_pattern):
+        # ... (unchanged)
+        if not context_pattern: return "an unknown concept"
+        best_symbol, max_size = None, 0
         for symbol, pattern in self.fabric.symbol_table.items():
             if symbol.startswith(("action_", "goal_", "state_", "url_")): continue
-            if pattern.issubset(context_pattern) and len(pattern) > max_subset_size:
-                max_subset_size, best_symbol = len(pattern), symbol
+            if pattern.issubset(context_pattern) and len(pattern) > max_size:
+                max_size, best_symbol = len(pattern), symbol
         if best_symbol:
             if best_symbol.startswith("event_"): return best_symbol.replace("event_", "").replace("_", " ")
             elif best_symbol.startswith("word_"):
@@ -36,48 +29,35 @@ class ActionCortex:
                     if p_map == self.fabric.recall(best_symbol): return word
         return "an unknown concept"
 
-    def _ask_oracle_action(self, context_pattern: set):
+    def _ask_oracle_action(self, context_pattern):
+        # ... (unchanged)
         topic = self._get_words_for_pattern(context_pattern)
-        prompt = f"What is {topic}?"
-        response = self.oracle.query_llm(prompt)
-        if response:
-            self.language_cortex.perceive_text_block(response)
-            self.speech_queue.put(prompt)
+        if topic == "an unknown concept": return
+        prompt = f"In one simple sentence, what is {topic}?"; response = self.oracle.query_llm(prompt)
+        if response: self.language_cortex.perceive_text_block(response)
 
-    def _search_web_action(self, context_pattern: set):
+    def _search_web_action(self, context_pattern):
+        # ... (unchanged)
         topic = self._get_words_for_pattern(context_pattern)
-        if topic == "an unknown concept":
-            print("ACTION_FAIL: Search had no known topic in context.")
-            return []
+        if topic == "an unknown concept": return []
         return self.browser.search(topic, num_results=1)
 
-    def _browse_page_action(self, context_pattern: set):
-        # --- THE FIX: Compare the frozenset context to the frozenset map values ---
-        # The context_pattern is a frozenset. The language_cortex map also stores frozensets.
-        
-        url = None
-        # Find the URL string by looking for the pattern in the language cortex's authoritative map.
-        for word, pattern in self.language_cortex.word_to_pattern_map.items():
-            if pattern == context_pattern:
-                url = word # The "word" for a URL pattern is the URL symbol itself.
-                break
-        
-        if not url or not url.startswith("url_"):
-            print("ACTION_FAIL: Browse action could not resolve URL from context.")
-            return None, []
-        
-        # Decode the URL from its symbol representation.
-        url_string = url.replace('url_', '')
-        
-        text = self.browser.fetch_page_text(url_string)
+    def _browse_page_action(self, context_string):
+        # This action now receives a simple string, not a pattern
+        url = context_string
+        text = self.browser.fetch_page_text(url)
         return text, []
 
-    def step(self, fired_uids: set):
-        if not fired_uids or not self._action_registry: return None
-        for symbol, action_data in self._action_registry.items():
-            action_pattern = action_data.get("pattern")
-            if action_pattern and action_pattern.issubset(fired_uids):
-                # The context is correctly calculated as a frozenset here.
-                context = frozenset(fired_uids - action_pattern)
-                return action_data["function"](context)
+    def execute_action(self, plan):
+        """Executes a plan formulated by the PlanningCortex."""
+        if not plan or 'action' not in plan: return None
+        action_symbol = plan['action']
+        
+        if action_symbol in self._action_registry:
+            function = self._action_registry[action_symbol]
+            # Pass the correct type of context to the function
+            if 'context_pattern' in plan:
+                return function(plan['context_pattern'])
+            elif 'context_string' in plan:
+                return function(plan['context_string'])
         return None

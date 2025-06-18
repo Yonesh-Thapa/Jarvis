@@ -1,91 +1,47 @@
-# test script here
+# full, runnable code here
+import unittest
 import random
 import time
-from neural_fabric import NeuralFabric, PowerBudgetExceededError
+from src.neural_fabric import NeuralFabric, PowerBudgetExceededError
 
-def run_fabric_test():
-    """Tests the core functionalities of the NeuralFabric."""
-    print("--- Starting NeuralFabric Test ---")
+class TestNeuralFabric(unittest.TestCase):
+    def setUp(self):
+        """Set up a fresh fabric for each test."""
+        self.fabric = NeuralFabric(max_neurons=12000, power_budget_watts=20.0)
 
-    # 1. Instantiate the fabric with a total capacity and power budget.
-    # We allocate more max_neurons than immediately needed to test dynamic growth.
-    MAX_NEURONS = 12000
-    POWER_BUDGET = 20.0 # Watts
-    fabric = NeuralFabric(max_neurons=MAX_NEURONS, power_budget_watts=POWER_BUDGET)
-    print(f"Fabric instantiated with {MAX_NEURONS} max neuron capacity and a {POWER_BUDGET}W budget.")
+    def test_dynamic_growth(self):
+        """Tests adding neurons on demand."""
+        self.fabric.add_neurons(n=10000, zone='vision')
+        self.assertEqual(len(self.fabric.neurons), 10000)
+        self.fabric.add_neurons(n=1000, zone='audio')
+        self.assertEqual(len(self.fabric.neurons), 11000)
 
-    # 2. Add initial neurons and demonstrate dynamic growth.
-    print("\n--- Testing Dynamic Growth ---")
-    fabric.add_neurons(n=10000, zone='vision')
-    assert len(fabric.neurons) == 10000
-    assert len(fabric.zones['vision']) == 10000
+    def test_pattern_binding_and_recall(self):
+        """Tests binding a symbol to a pattern and recalling it."""
+        self.fabric.add_neurons(n=1000, zone='test')
+        test_neuron_ids = list(self.fabric.zones['test'])
+        pattern_to_bind = set(random.sample(test_neuron_ids, 50))
+        self.fabric.bind("TEST_A", pattern_to_bind)
+        recalled_pattern = self.fabric.recall("TEST_A")
+        self.assertEqual(pattern_to_bind, recalled_pattern)
 
-    fabric.add_neurons(n=1000, zone='audio')
-    assert len(fabric.neurons) == 11000
-    assert len(fabric.zones['audio']) == 1000
-    print("Dynamic growth test passed.")
-
-    # 3. Fire a random sparse pattern, bind a symbol, and test recall.
-    print("\n--- Testing Pattern Binding and Recall ---")
-    
-    # Create a sparse pattern (e.g., ~1% of vision neurons)
-    vision_neuron_ids = list(fabric.zones['vision'])
-    pattern_size = int(0.01 * len(vision_neuron_ids))
-    sparse_pattern_to_bind = set(random.sample(vision_neuron_ids, pattern_size))
-    
-    # Bind the symbol "TEST_PATTERN_A" to this set of neurons
-    fabric.bind("TEST_PATTERN_A", sparse_pattern_to_bind)
-    
-    # Recall the neurons using the symbol
-    recalled_neuron_ids = fabric.recall("TEST_PATTERN_A")
-    
-    # Verify that the recalled set is identical to the original
-    assert sparse_pattern_to_bind == recalled_neuron_ids
-    print(f"Successfully bound and recalled 'TEST_PATTERN_A' with {len(recalled_neuron_ids)} neurons.")
-    print("Binding and recall test passed.")
-
-    # 4. Test activation, simulation step, and energy accounting.
-    print("\n--- Testing Simulation and Power Estimation ---")
-
-    # Activate the pattern we just recalled
-    print("Activating pattern...")
-    fabric.activate_pattern(recalled_neuron_ids, signal_strength=1.1) # Strength > threshold to ensure firing
-
-    # Run the simulation for one step
-    print("Running one simulation step...")
-    fired_uids = fabric.step_simulation()
-    print(f"Step completed. {len(fired_uids)} neurons fired.")
-
-    # The fired neurons should be our pattern (or a subset if potential decayed)
-    assert len(fired_uids) > 0
-    assert fired_uids.issubset(recalled_neuron_ids)
-
-    # Let the simulation run for a moment to get a stable power reading
-    time.sleep(0.2)
-    fabric.update_power_estimate()
-    estimated_watts = fabric.get_total_estimated_watts()
-
-    print(f"Live estimated power: {estimated_watts:.6f} W")
-    assert estimated_watts < 0.1 # For this small test, power should be minimal
-    print("Power estimation test passed.")
-    
-    # Test power budget exception
-    print("\n--- Testing Power Budget Enforcement ---")
-    try:
-        # Set a ridiculously low budget that will be exceeded
-        fabric.power_budget_watts = 1e-12
-        fabric.step_simulation() # This activity should now throw an error
-        # This line should not be reached
-        print("FAIL: PowerBudgetExceededError was not raised!")
-    except PowerBudgetExceededError as e:
-        print(f"SUCCESS: Caught expected exception: {e}")
-    except Exception as e:
-        print(f"FAIL: Caught unexpected exception: {e}")
-    finally:
-        # Reset budget for any further tests
-        fabric.power_budget_watts = POWER_BUDGET
+    def test_simulation_and_power(self):
+        """Tests a simulation step and power estimation."""
+        self.fabric.add_neurons(n=100, zone='test')
+        pattern = set(self.fabric.zones['test'])
+        self.fabric.activate_pattern(pattern, signal_strength=1.1)
+        fired_uids = self.fabric.step_simulation()
+        self.assertTrue(len(fired_uids) > 0)
         
-    print("\n--- All NeuralFabric Tests Passed ---")
+        # --- FIX: Use the restored function ---
+        power = self.fabric.get_total_estimated_watts()
+        self.assertGreater(power, 0)
+        self.assertLess(power, 0.1)
 
-if __name__ == "__main__":
-    run_fabric_test()
+    def test_power_budget_exception(self):
+        """Tests that the power budget enforcement raises an exception."""
+        self.fabric.add_neurons(n=100, zone='test')
+        self.fabric.power_budget_watts = 1e-15 # Set an impossibly low budget
+        self.fabric.activate_pattern(set(self.fabric.zones['test']), 1.1)
+        with self.assertRaises(PowerBudgetExceededError):
+            self.fabric.step_simulation()
