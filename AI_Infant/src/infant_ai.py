@@ -1,11 +1,5 @@
 # full, runnable code here
-import time
-import threading
-import cv2
-import pickle
-import sys # Added for shutdown message
-import random
-import queue
+import time, threading, cv2, pickle, sys, random, queue
 
 from .neural_fabric import NeuralFabric, PowerBudgetExceededError
 from .vision_cortex import VisionCortex
@@ -15,216 +9,112 @@ from .logic_cortex import LogicCortex
 from .emotion_module import EmotionModule
 from .action_cortex import ActionCortex
 
+class ActionCortex:
+    def __init__(self, fabric: NeuralFabric, speech_queue: queue.Queue):
+        self.fabric = fabric; self.speech_queue = speech_queue; self._action_registry = {}
+        print("ActionCortex initialized.")
+    def register_action(self, symbol: str, function):
+        pattern = self.fabric.recall(symbol)
+        if pattern: self._action_registry[symbol] = {"pattern": pattern, "function": function}
+    def _speak_action(self, context_pattern: set):
+        text_to_speak = next((s.replace("_", " ") for s, p in self.fabric.symbol_table.items() if not s.startswith("action_") and p.issubset(context_pattern)), None)
+        if text_to_speak: self.speech_queue.put(text_to_speak); print(f"ACTION: Queuing speech for '{text_to_speak}'")
+    def step(self, fired_uids: set):
+        if not fired_uids: return
+        for symbol, action_data in self._action_registry.items():
+            action_pattern = action_data.get("pattern")
+            if action_pattern and action_pattern.issubset(fired_uids):
+                action_data["function"](fired_uids - action_pattern); break
+
 class InfantAI:
-    """
-    The integrated AI system. Orchestrates all cognitive modules and runs
-    the main perception-action-learning loop.
-    """
     def __init__(self):
         print("--- Bootstrapping Infant AI System ---")
         self.is_running = False
+        self.display_queue = queue.Queue(maxsize=2)
+        self.speech_queue = queue.Queue(maxsize=5)
         self._setup_components()
         self.last_salient_pattern = frozenset()
         self.user_input_thread = threading.Thread(target=self._handle_user_input, daemon=True)
-        # --- START OF CHANGE ---
-        # A thread-safe queue to pass frames from the AI thread to the main display thread.
-        # maxsize=1 means we only care about the most recent frame.
-        self.display_queue = queue.Queue(maxsize=1)
-        # --- END OF CHANGE ---
+        
     def _setup_components(self):
-        """Initializes and connects all the AI's core modules."""
-        # 1. The Neural Substrate
         self.fabric = NeuralFabric(max_neurons=50000, power_budget_watts=20.0)
-        
-        # 2. Allocate neurons for each functional zone
-        self.fabric.add_neurons(n=64*48, zone='vision')
-        self.fabric.add_neurons(n=13*8, zone='audio')
-        self.fabric.add_neurons(n=1000, zone='general_association')
-        
-        # 3. Initialize Cortex Controllers
+        self.fabric.add_neurons(n=64*48, zone='vision'); self.fabric.add_neurons(n=13*8, zone='audio'); self.fabric.add_neurons(n=1000, zone='general_association')
         self.vision = VisionCortex(self.fabric, 'vision', input_resolution=(640, 480), grid_size=(64, 48))
         self.audio = AudioCortex(self.fabric, 'audio')
         self.memory = MemoryCore(self.fabric, consolidation_threshold=3)
         self.logic = LogicCortex(self.fabric, self.memory)
         self.emotion = EmotionModule(self.fabric, self.memory)
-        self.action = ActionCortex(self.fabric, self.logic)
-        
+        self.action = ActionCortex(self.fabric, self.speech_queue)
         print("\n--- All AI components initialized successfully. ---")
 
     def _handle_user_input(self):
-        """Runs in a separate thread to handle non-blocking user commands."""
+        if not sys.stdin.isatty(): print("\nWARNING: Non-interactive shell. Command prompt disabled."); return
         print("\nUser command interface is active. Type 'help' for commands.")
         while self.is_running:
             try:
                 command = input("> ").lower().strip().split()
-                if not command:
-                    continue
-                
-                cmd = command[0]
-                args = command[1:]
-
-                if cmd == 'help':
-                    print("Commands:\n"
-                          "  bind <symbol>       - Binds a name to the last salient event.\n"
-                          "  query <sym_a> <sym_b> - Queries the association between two symbols.\n"
-                          "  assess <valence>    - Applies emotional valence (-1.0 to 1.0) to the last event.\n"
-                          "  do <seq>... <action>  - Executes a thought/action sequence (e.g., 'do cup action_speak').\n"
-                          "  status              - Shows the current status of the AI.\n"
-                          "  save <filename>     - Saves the AI's memory (fabric state).\n"
-                          "  load <filename>     - Loads a previously saved memory.\n"
-                          "  quit                - Shuts down the AI.")
-                elif cmd == 'bind' and args:
-                    self.logic.bind_symbol_to_pattern(args[0], self.last_salient_pattern)
-                elif cmd == 'query' and len(args) == 2:
-                    strength = self.logic.query_association(args[0], args[1])
-                    print(f"Association strength between '{args[0]}' and '{args[1]}': {strength:.2f}")
-                elif cmd == 'assess' and args:
-                    valence = float(args[0])
-                    self.emotion.assess(self.last_salient_pattern, valence)
-                elif cmd == 'do' and args:
-                    self.logic.execute_thought_sequence(args)
-                elif cmd == 'status':
-                    print(f"Current Valence: {self.emotion.get_current_valence():.2f} | "
-                          f"Learning Rate: {self.emotion.get_current_learning_rate():.4f} | "
-                          f"Consolidated Memories: {len(self.memory.consolidated_patterns)}")
-                elif cmd == 'save' and args:
-                    self.save_state(args[0])
-                elif cmd == 'load' and args:
-                    self.load_state(args[0])
-                elif cmd == 'quit':
-                    self.is_running = False
-                else:
-                    print("Unknown command. Type 'help'.")
-            
-            except (KeyboardInterrupt, EOFError):
-                # Gracefully shut down if user presses Ctrl+C or Ctrl+D
-                print("\nUser interrupted. Shutting down...")
-                self.is_running = False
-            
-            except Exception as e:
-                print(f"Error processing command: {e}")
+                if not command: continue
+                cmd, args = command[0], command[1:]
+                if cmd == 'help': print("Commands: bind, query, assess, do, status, quit")
+                elif cmd == 'bind' and args: self.logic.bind_symbol_to_pattern(args[0], self.last_salient_pattern)
+                elif cmd == 'query' and len(args) == 2: print(f"Association: {self.logic.query_association(args[0], args[1]):.2f}")
+                # --- START OF NEW COMMAND ---
+                elif cmd == 'associate' and len(args) >= 3 and args[1] == 'with':
+                    # e.g., associate black_charger with black charger
+                    new_symbol = args[0]
+                    existing_symbols = args[2:]
+                    self.logic.associate_concepts(new_symbol, existing_symbols, self.last_salient_pattern)
+                # --- END OF NEW COMMAND ---
+                elif cmd == 'assess' and args: self.emotion.assess(self.last_salient_pattern, float(args[0]))
+                elif cmd == 'do' and args: self.logic.execute_thought_sequence(args)
+                elif cmd == 'status': print(f"Valence: {self.emotion.get_current_valence():.2f}, Memories: {len(self.memory.consolidated_patterns)}")
+                elif cmd == 'quit': self.is_running = False; break
+                else: print("Unknown command.")
+            except (KeyboardInterrupt, EOFError): self.is_running = False; break
+            except Exception as e: print(f"Error processing command: {e}")
 
     def live(self):
-        """The main cognitive loop."""
-        self.is_running = True
-        self.audio.start_stream()
-        self.user_input_thread.start()
-        
-        # --- Post-bootstrapping: Create a concept for the 'speak' action ---
-        action_speak_neurons = self.fabric.zones['general_association']
-        if len(action_speak_neurons) < 5:
-             print("CRITICAL: Not enough neurons in general_association zone for actions.")
-             self.shutdown()
-             return
-        
-        action_speak_pattern = set(random.sample(list(action_speak_neurons), 5))
-        self.logic.bind_symbol_to_pattern("action_speak", action_speak_pattern)
-        self.action.register_action("action_speak", self.action._speak_action)
-        
-        cap = cv2.VideoCapture(0)
-        if not cap.isOpened():
-            print("Error: Cannot open webcam.")
-            self.shutdown()
-            return
+        print("\nINFO: Running infant_ai.py with stable architecture.\n")
+        cap = None; self.is_running = True
+        try:
+            self.audio.start_stream(); self.user_input_thread.start()
+            action_speak_neurons = self.fabric.zones['general_association']
+            if len(action_speak_neurons) >= 5:
+                action_speak_pattern = set(random.sample(list(action_speak_neurons), 5))
+                self.logic.bind_symbol_to_pattern("action_speak", action_speak_pattern)
+                self.action.register_action("action_speak", self.action._speak_action)
             
-        last_consolidation_time = time.time()
-        last_prune_time = time.time()
-        
-        print("\n--- AI is now LIVE. Running perception loop... ---")
-        while self.is_running:
-            try:
-                # 1. Perception
+            for i in range(4):
+                temp_cap = cv2.VideoCapture(i)
+                if temp_cap and temp_cap.isOpened():
+                    ret, frame = temp_cap.read()
+                    if ret and frame is not None: cap = temp_cap; print(f"SUCCESS: Camera found at index {i}."); break
+                    else: temp_cap.release()
+            
+            if not cap: raise RuntimeError("Could not find any working camera.")
+            
+            print("\n--- AI is now LIVE. Running perception loop... ---")
+            while self.is_running:
                 ret, frame = cap.read()
-                if not ret:
-                    break
+                if not ret: time.sleep(0.01); continue
                 
-                vision_activations = self.vision.process_frame(frame)
-                
-                # 2. Cognition (Stepping the Fabric)
+                self.vision.process_frame(frame)
                 fired_uids = self.fabric.step_simulation()
+                if len(fired_uids) > 5: self.last_salient_pattern = frozenset(fired_uids); self.memory.observe(self.last_salient_pattern)
+                self.action.step(fired_uids); self.emotion.step()
                 
-                # 3. Learning & State Update
-                if len(fired_uids) > 5: # Only observe non-trivial patterns
-                    self.last_salient_pattern = frozenset(fired_uids)
-                    self.memory.observe(self.last_salient_pattern)
-                
-                self.action.step(fired_uids)
-                self.emotion.step()
-
-                # 4. Periodic Maintenance Tasks
-                now = time.time()
-                if now - last_consolidation_time > 5:
-                    self.memory.consolidate()
-                    last_consolidation_time = now
-                
-                if now - last_prune_time > 60:
-                    self.memory.prune_synapses()
-                    last_prune_time = now
-
-                # --- START OF CHANGE ---
-                # Instead of showing the image here, put it in the queue for the main thread.
                 display_frame = self.vision._frame_to_edges(frame)
-                cv2.putText(display_frame, f"Power: {self.fabric.get_total_estimated_watts():.4f}W", (10, 20), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255,255,255), 1)
                 cv2.putText(display_frame, f"Fired: {len(fired_uids)}", (10, 40), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255,255,255), 1)
-                
-                # 5. Display & Monitoring
-                edge_image = self.vision._frame_to_edges(frame)
-                cv2.putText(edge_image, f"Power: {self.fabric.get_total_estimated_watts():.4f}W", (10, 20), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255,255,255), 1)
-                cv2.putText(edge_image, f"Fired: {len(fired_uids)}", (10, 40), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255,255,255), 1)
-                cv2.imshow('AI Perception', edge_image)
-
-                if cv2.waitKey(1) & 0xFF == ord('q'):
-                    self.is_running = False
-                    
-            except PowerBudgetExceededError as e:
-                print(f"CRITICAL: {e}. Cooling down...")
-                time.sleep(2)
-            except KeyboardInterrupt:
-                self.is_running = False
-         # --- START OF CHANGE ---
-        # Signal the display loop to terminate by putting a sentinel value in the queue.
-        self.display_queue.put(None)
-        cap.release()
-        # --- END OF CHANGE ---
-
-        self.shutdown()
-
-    def save_state(self, filepath: str):
-        """Saves the state of the NeuralFabric to a file."""
-        try:
-            with open(filepath, 'wb') as f:
-                pickle.dump(self.fabric, f)
-            print(f"AI state saved to {filepath}")
-        except Exception as e:
-            print(f"Error saving state: {e}")
-
-    def load_state(self, filepath: str):
-        """Loads the AI state from a file and re-initializes controllers."""
-        try:
-            with open(filepath, 'rb') as f:
-                self.fabric = pickle.load(f)
-            # Re-wire all modules to the newly loaded fabric
-            self._setup_components()
-            print(f"AI state loaded from {filepath}. System re-initialized.")
-        except Exception as e:
-            print(f"Error loading state: {e}")
+                try: self.display_queue.put_nowait(display_frame)
+                except queue.Full: pass
+        except Exception as e: print(f"FATAL ERROR in AI loop: {e}")
+        finally:
+            self.is_running = False
+            if cap: cap.release()
+            self.display_queue.put(None); self.speech_queue.put(None)
+            print("INFO: AI thread has finished.")
 
     def shutdown(self):
-        """Gracefully shuts down all components."""
-        # Check if it's already in the process of shutting down
-        if not self.is_running and not self.user_input_thread.is_alive():
-            return
-            
         print("\n--- Shutting down AI system... ---")
-        self.is_running = False
-        self.audio.stop_stream()
-        cv2.destroyAllWindows()
-        # Give a moment for the user input thread to see the is_running flag
-        # and exit its loop, preventing a hang.
-        print("Waiting for threads to close...")
-        if threading.current_thread() != self.user_input_thread:
-            self.user_input_thread.join(timeout=2.0)
-        
+        if self.audio.is_streaming: self.audio.stop_stream()
         print("Shutdown complete.")
-        # Added to ensure the script fully terminates in some environments
-        sys.exit(0)
