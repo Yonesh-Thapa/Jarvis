@@ -10,64 +10,72 @@ class LogicCortex:
         self.abstract_categories = {}
         print("LogicCortex initialized.")
 
-    # --- New helper function for robust symbol resolution ---
     def _resolve_symbol_to_pattern(self, symbol: str) -> frozenset | None:
-        """
-        Intelligently finds the neural pattern for any given symbol,
-        whether it's a word, an event, or another abstract concept.
-        """
-        # First, check for known abstract prefixes
         if symbol.startswith(("event_", "goal_", "meta_", "op_")):
             return self.fabric.recall(symbol)
-        
-        # If no prefix, assume it's a word and ask the LanguageCortex
         pattern, _ = self.fabric.language._get_or_create_pattern_for_word(symbol)
-        if pattern:
-            return pattern
-            
-        # As a final fallback, check the main fabric table again
+        if pattern: return pattern
         return self.fabric.recall(symbol)
 
+    def integrate_textual_knowledge(self, main_idea_pattern: frozenset, property_patterns: set):
+        if not main_idea_pattern or not property_patterns: return
+        main_idea_symbol = self.fabric.relation._get_symbol_for_pattern(main_idea_pattern)
+        print(f"\n--- Integrating knowledge about '{main_idea_symbol}' ---")
+        
+        all_involved_neurons = set(main_idea_pattern)
+        for prop_pattern in property_patterns:
+            if prop_pattern != main_idea_pattern:
+                all_involved_neurons.update(prop_pattern)
+        
+        frozen_pattern = frozenset(all_involved_neurons)
+        self.memory._strengthen_pattern(frozen_pattern)
+        
+        # --- THE FIX: This learning event is important. Remember it. ---
+        # We observe it multiple times to ensure it crosses the consolidation threshold.
+        print(f"  - Committing integrated knowledge of size {len(frozen_pattern)} to short-term memory.")
+        for _ in range(self.memory.consolidation_threshold):
+            self.memory.observe(frozen_pattern)
+
+    def integrate_event_knowledge(self, event_pattern: frozenset, component_patterns: set):
+        if not event_pattern or not component_patterns: return
+        
+        all_involved_neurons = set(event_pattern)
+        for component in component_patterns:
+            all_involved_neurons.update(component)
+        
+        frozen_pattern = frozenset(all_involved_neurons)
+        self.memory._strengthen_pattern(frozen_pattern)
+        print(f"  - Integrating event with its {len(component_patterns)} components.")
+        
+        # --- THE FIX: This new relationship is important. Remember it. ---
+        self.memory.observe(frozen_pattern)
+
+    # All other methods below this point are unchanged and correct.
     def bind_symbol_to_pattern(self, symbol: str, pattern_uids: set):
         self.fabric.bind(symbol, pattern_uids)
 
     def associate_concepts(self, new_symbol: str, existing_symbols: list, context_pattern: set):
-        # ... This method is unchanged
         self.bind_symbol_to_pattern(new_symbol, context_pattern)
-        all_involved_neurons = set(context_pattern)
+        all_involved_neurons = frozenset(context_pattern)
         for symbol in existing_symbols:
             pattern = self._resolve_symbol_to_pattern(symbol)
-            if pattern: all_involved_neurons.update(pattern)
-        self.memory._strengthen_pattern(frozenset(all_involved_neurons))
-
-    def integrate_event_knowledge(self, event_pattern: frozenset, component_patterns: set):
-        # ... This method is unchanged
-        all_involved_neurons = set(event_pattern)
-        for component in component_patterns: all_involved_neurons.update(component)
+            if pattern: all_involved_neurons = all_involved_neurons.union(pattern)
         self.memory._strengthen_pattern(all_involved_neurons)
+        self.memory.observe(all_involved_neurons)
 
-    # --- START OF FINAL FIX: QUERY USES THE RESOLVER ---
     def query_association(self, symbol_a: str, symbol_b: str) -> float:
         pattern_a = self._resolve_symbol_to_pattern(symbol_a)
         pattern_b = self._resolve_symbol_to_pattern(symbol_b)
-            
         if not pattern_a or not pattern_b:
             print(f"QUERY_FAIL: One or both symbols ('{symbol_a}', '{symbol_b}') are unknown.")
             return 0.0
-
-        # Activate the first pattern as the cue
         self.fabric.activate_pattern(pattern_a, 1.1)
-        self.fabric.step_simulation() # Let the cue fire
-        
-        # See what downstream neurons fire in the next step
+        self.fabric.step_simulation()
         downstream_activations = self.fabric.step_simulation()
-        
         intersection = len(pattern_b.intersection(downstream_activations))
         return intersection / len(pattern_b) if len(pattern_b) > 0 else 0.0
-    # --- END OF FINAL FIX ---
 
     def perform_inference(self, start_word: str):
-        # This method is now correct and does not need changes.
         print(f"\n--- Performing Inference starting from '{start_word}' ---")
         start_pattern, _ = self.fabric.language._get_or_create_pattern_for_word(start_word)
         if not start_pattern:
