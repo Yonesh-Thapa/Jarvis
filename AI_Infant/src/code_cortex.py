@@ -29,6 +29,9 @@ class CodeCortex:
         def create_axiom(name, num_neurons=5):
             nonlocal used_neurons
             available = list(set(axiom_neurons) - used_neurons)
+            if len(available) < num_neurons:
+                print(f"WARNING: Not enough neurons for axiom '{name}'")
+                return set()
             pattern = set(random.sample(available, num_neurons))
             used_neurons.update(pattern)
             self.fabric.bind(f"op_{name}", pattern)
@@ -41,18 +44,18 @@ class CodeCortex:
         self.op_add = create_axiom("add")
         
         # Ground syntax to these operations
-        # The AI learns that the text pattern for "=" is associated with the "assign" operation
         equals_pattern, _ = self.language_cortex._get_or_create_pattern_for_word("=")
-        self.fabric.connect_neurons(list(equals_pattern)[0], list(self.op_assign)[0], weight=1.0)
+        if equals_pattern and self.op_assign: self.fabric.connect_neurons(list(equals_pattern)[0], list(self.op_assign)[0], weight=1.0)
         
         print_pattern, _ = self.language_cortex._get_or_create_pattern_for_word("print")
-        self.fabric.connect_neurons(list(print_pattern)[0], list(self.op_print)[0], weight=1.0)
+        if print_pattern and self.op_print: self.fabric.connect_neurons(list(print_pattern)[0], list(self.op_print)[0], weight=1.0)
         
         plus_pattern, _ = self.language_cortex._get_or_create_pattern_for_word("+")
-        self.fabric.connect_neurons(list(plus_pattern)[0], list(self.op_add)[0], weight=1.0)
+        if plus_pattern and self.op_add: self.fabric.connect_neurons(list(plus_pattern)[0], list(self.op_add)[0], weight=1.0)
 
-    def _get_value(self, token):
+    def _get_value(self, token: str) -> int:
         """Resolves a token to a value, from the sandbox or as a literal."""
+        token = token.strip()
         if token.isdigit():
             return int(token)
         elif token in self.mental_sandbox:
@@ -76,7 +79,6 @@ class CodeCortex:
             
             print(f"  - Simulating line {i+1}: `{line}`")
 
-            # Simple Regex for parsing 'var = val' or 'var = val1 + val2' or 'print(var)'
             assignment_match = re.match(r"(\w+)\s*=\s*(.+)", line)
             print_match = re.match(r"print\((.+)\)", line)
 
@@ -84,25 +86,24 @@ class CodeCortex:
                 var_name = assignment_match.group(1)
                 expression = assignment_match.group(2).strip()
                 
-                # Check for addition
                 if '+' in expression:
                     val1_str, val2_str = [v.strip() for v in expression.split('+', 1)]
                     val1 = self._get_value(val1_str)
                     val2 = self._get_value(val2_str)
                     result = val1 + val2
-                    self.fabric.activate_pattern(self.op_add, 1.1)
+                    if self.op_add: self.fabric.activate_pattern(self.op_add, 1.1)
                 else:
                     result = self._get_value(expression)
 
                 self.mental_sandbox[var_name] = result
-                self.fabric.activate_pattern(self.op_assign, 1.1)
+                if self.op_assign: self.fabric.activate_pattern(self.op_assign, 1.1)
                 print(f"    - State: {var_name} is now {result}")
 
             elif print_match:
                 var_name = print_match.group(1).strip()
                 value_to_print = self._get_value(var_name)
-                print(f"    - OUTPUT: {value_to_print}")
-                self.fabric.activate_pattern(self.op_print, 1.1)
+                print(f"    - SIMULATED_OUTPUT: {value_to_print}")
+                if self.op_print: self.fabric.activate_pattern(self.op_print, 1.1)
 
             else:
                 print(f"    - SYNTAX_UNFAMILIAR: Could not parse line.")

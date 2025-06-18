@@ -5,10 +5,9 @@ import openai
 class KnowledgeOracle:
     """
     Acts as the AI's interface to an external Large Language Model (LLM).
-    This version is configured to use the high-speed Groq API.
+    --- UPGRADE: This version is configured to use the high-speed Groq API. ---
     """
     def __init__(self):
-        # Look for the GROQ_API_KEY environment variable
         self.api_key = os.environ.get("GROQ_API_KEY")
         if not self.api_key:
             print("WARNING: GROQ_API_KEY environment variable not set. Knowledge Oracle will be disabled.")
@@ -34,13 +33,12 @@ class KnowledgeOracle:
         
         try:
             chat_completion = self.client.chat.completions.create(
-                # Use a model available on Groq, Llama 3 8B is excellent and fast
-                model="llama3-8b-8192",
+                model="llama3-8b-8192", # Llama 3 8B on Groq is excellent and fast
                 messages=[
                     {"role": "system", "content": "You are a helpful assistant. Provide a very concise, single-sentence explanation suitable for a learning AI."},
                     {"role": "user", "content": prompt},
                 ],
-                max_tokens=60, # Keep responses short and to the point
+                max_tokens=60,
                 temperature=0.7,
             )
             response = chat_completion.choices[0].message.content

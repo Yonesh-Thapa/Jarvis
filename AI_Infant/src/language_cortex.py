@@ -20,29 +20,45 @@ class LanguageCortex:
         print("LanguageCortex initialized and connected to RelationalCortex.")
 
     def _get_or_create_pattern_for_word(self, word: str) -> tuple[frozenset | None, str | None]:
+        """
+        Retrieves the neural pattern for a word. If the word is new, it creates
+        a new, unique pattern for it and binds it in the fabric.
+        """
+        word = word.lower().strip(".,'\"?!")
+        if not word: return None, None
+
         if word in self.word_to_pattern_map:
             pattern = self.word_to_pattern_map[word]
-            symbol = self.relational_cortex._get_symbol_for_pattern(pattern)
+            symbol = self.relational_cortex._get_symbol_for_pattern(pattern, default=word)
             return pattern, symbol
         
+        # Use a hash to generate a consistent but unique symbol name
         word_hash = hashlib.sha256(word.encode()).hexdigest()
         symbol = f"word_{word_hash[:8]}"
+        
         pattern_set = self.fabric.recall(symbol)
         if pattern_set:
             self.word_to_pattern_map[word] = frozenset(pattern_set)
             return frozenset(pattern_set), symbol
 
         available_neurons = [n for n in self.language_neurons if n not in self.used_neurons]
-        if len(available_neurons) < self.neuron_per_word: return None, None
+        if len(available_neurons) < self.neuron_per_word:
+            print(f"LANGUAGE_CORTEX_WARN: Not enough neurons left to learn the word '{word}'.")
+            return None, None
         
         new_pattern = set(random.sample(available_neurons, self.neuron_per_word))
         self.used_neurons.update(new_pattern)
         self.fabric.bind(symbol, new_pattern)
+        self.fabric.bind(word, new_pattern) # Also bind the raw word for easy lookup
         frozen_pattern = frozenset(new_pattern)
         self.word_to_pattern_map[word] = frozen_pattern
-        return frozen_pattern, symbol
+        return frozen_pattern, word
 
     def perceive_text_block(self, text_block: str) -> tuple[set, frozenset | None, set]:
+        """
+        Processes a block of text, converting it into neural activations,
+        identifying relationships, and determining the main idea.
+        """
         print(f"\n--- Perceiving and Analyzing text block... ---")
         sentences = text_block.replace('\n', ' ').replace(';','.').replace('!','.').replace('?','.').split('.')
         all_perceived_patterns = set()
@@ -50,16 +66,14 @@ class LanguageCortex:
         word_counter = Counter()
         
         # --- START OF FINAL FIX: Robust Sliding Window with Stop Word Removal ---
-        stop_words = {'a', 'an', 'the'}
+        stop_words = {'a', 'an', 'the', 'in', 'on', 'at', 'is', 'are', 'was', 'were', 'of', 'for', 'to'}
 
         for sentence in sentences:
-            # Pre-process to remove stop words
             words = [w for w in sentence.lower().strip().split() if w and w not in stop_words]
             if not words: continue
             
-            word_counter.update(w for w in words if len(w) > 3)
+            word_counter.update(w for w in words if len(w) > 2)
             
-            # Use a deque for the sliding window
             word_patterns_in_sentence = deque(maxlen=3)
 
             for word in words:
@@ -68,7 +82,6 @@ class LanguageCortex:
                 all_perceived_patterns.add(pattern)
                 word_patterns_in_sentence.append(pattern)
                 
-                # If the window is full, analyze the triad for a relationship
                 if len(word_patterns_in_sentence) == 3:
                     subject, verb, obj = list(word_patterns_in_sentence)
                     event_pattern = self.relational_cortex.create_and_integrate_relation(subject, verb, obj)

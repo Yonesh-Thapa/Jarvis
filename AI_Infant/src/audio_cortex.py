@@ -51,19 +51,24 @@ class AudioCortex:
     def start_stream(self):
         if self.is_streaming:
             return
-        self.stream = self.p.open(format=pyaudio.paFloat32, channels=1,
-                                  rate=self.sample_rate, input=True,
-                                  frames_per_buffer=self.chunk_size,
-                                  stream_callback=self._audio_callback)
-        self.is_streaming = True
-        self.processing_thread = threading.Thread(target=self._process_audio_thread, daemon=True)
-        self.processing_thread.start()
-        print("Audio stream started.")
+        try:
+            self.stream = self.p.open(format=pyaudio.paFloat32, channels=1,
+                                      rate=self.sample_rate, input=True,
+                                      frames_per_buffer=self.chunk_size,
+                                      stream_callback=self._audio_callback)
+            self.is_streaming = True
+            self.processing_thread = threading.Thread(target=self._process_audio_thread, daemon=True)
+            self.processing_thread.start()
+            print("Audio stream started.")
+        except Exception as e:
+            print(f"AUDIO_ERROR: Could not start audio stream: {e}. Is a microphone connected?")
+            self.is_streaming = False
+            self.stream = None
 
     def stop_stream(self):
         if not self.is_streaming: return
         self.is_streaming = False
-        if self.processing_thread: self.processing_thread.join()
+        if self.processing_thread and self.processing_thread.is_alive(): self.processing_thread.join()
         if self.stream:
             self.stream.stop_stream()
             self.stream.close()

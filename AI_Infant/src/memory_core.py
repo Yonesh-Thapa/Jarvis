@@ -16,22 +16,21 @@ class MemoryCore:
 
     def consolidate(self):
         if not self.short_term_memory: return
-        print("\n--- CONSOLIDATING MEMORIES ---")
+        
         pattern_counts = Counter(self.short_term_memory)
         salient_patterns = [p for p, count in pattern_counts.items() if count >= self.consolidation_threshold]
 
         if not salient_patterns:
-            print("  - No patterns met the threshold for consolidation.")
+            self.short_term_memory.clear()
             return
 
-        print(f"  - Found {len(salient_patterns)} salient patterns to consolidate.")
+        print(f"  - Consolidating {len(salient_patterns)} salient patterns into long-term memory.")
         for pattern in salient_patterns:
             self._strengthen_pattern(pattern)
             if pattern not in self.consolidated_patterns:
                 self.consolidated_patterns.append(pattern)
         
         self.short_term_memory.clear()
-        print("--- Consolidation complete. ---")
 
     def _strengthen_pattern(self, pattern_uids: frozenset):
         neuron_list = list(pattern_uids)
@@ -39,7 +38,7 @@ class MemoryCore:
             for j in range(i + 1, len(neuron_list)):
                 self.fabric.connect_neurons(neuron_list[i], neuron_list[j], weight=0.7)
                 self.fabric.connect_neurons(neuron_list[j], neuron_list[i], weight=0.7)
-        print(f"    - Consolidated pattern of size {len(pattern_uids)}")
+        # print(f"    - Consolidated pattern of size {len(pattern_uids)}")
 
     def recognize_pattern(self, current_pattern: set, threshold: float = 0.7) -> frozenset | None:
         if not self.consolidated_patterns or len(current_pattern) < 3: return None
@@ -61,29 +60,28 @@ class MemoryCore:
                 if synapse.weight > 0.5:
                     self.fabric.neurons[target_uid].receive_signal(activation_strength)
                     excited_neurons.add(target_uid)
-        print(f"INFO: Recall cue of size {len(cue_uids)} excited {len(excited_neurons)} neurons.")
         return excited_neurons
         
     def dream(self):
         if not self.consolidated_patterns: return
         dream_pattern = random.choice(self.consolidated_patterns)
-        print(f"INFO: Dreaming... replaying a memory of size {len(dream_pattern)}.")
+        print(f"  - Dreaming... replaying a memory of size {len(dream_pattern)}.")
         self.fabric.activate_pattern(dream_pattern, signal_strength=1.1)
 
     def prune_synapses(self, prune_threshold=0.05, prune_factor=0.99):
-        print("\n--- PRUNING WEAK SYNAPSES ---")
         pruned_count = 0
         synapses_to_prune = []
         with self.fabric.synapse_lock:
             for source_uid, targets in self.fabric.synapses.items():
-                for target_uid, synapse in targets.items():
+                for target_uid, synapse in list(targets.items()): # Use list to avoid runtime dict changes
                     synapse.weight *= prune_factor
                     if synapse.weight < prune_threshold:
                         synapses_to_prune.append((source_uid, target_uid))
+        
         for source_uid, target_uid in synapses_to_prune:
             if source_uid in self.fabric.synapses and target_uid in self.fabric.synapses[source_uid]:
                 del self.fabric.synapses[source_uid][target_uid]
                 pruned_count += 1
-        if pruned_count > 0: print(f"  - Pruned {pruned_count} weak synaptic connections.")
-        else: print("  - No synapses were weak enough to be pruned.")
-        print("--- Pruning complete. ---")
+        
+        if pruned_count > 0: 
+            print(f"  - Pruned {pruned_count} weak synaptic connections.")

@@ -1,5 +1,11 @@
 # full, runnable code here
 import unittest
+import os
+import sys
+
+# Adjust path to import from the 'src' directory
+sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
+
 from src.neural_fabric import NeuralFabric
 from src.relational_cortex import RelationalCortex
 from src.language_cortex import LanguageCortex
@@ -16,13 +22,13 @@ class TestLanguageCortex(unittest.TestCase):
         logic = LogicCortex(self.fabric, memory)
         self.fabric.logic = logic
         relational_cortex = RelationalCortex(self.fabric)
-        self.fabric.relation = relational_cortex
         self.language_cortex = LanguageCortex(self.fabric, relational_cortex, 'language')
+        # This cross-linking is crucial for the architecture to work
         self.fabric.language = self.language_cortex
+        self.fabric.relation = relational_cortex
 
     def test_word_perception_and_uniqueness(self):
         """Tests if unique patterns are created for unique words, and reused for the same word."""
-        # --- FIX: Handle the new 3-value return signature ---
         patterns1, _, _ = self.language_cortex.perceive_text_block("apple")
         pattern_apple1 = list(patterns1)[0]
         self.assertEqual(len(pattern_apple1), 5)
@@ -36,3 +42,19 @@ class TestLanguageCortex(unittest.TestCase):
         self.assertNotEqual(pattern_apple1, pattern_banana)
         
         self.assertEqual(len(self.language_cortex.word_to_pattern_map), 2)
+
+    def test_stop_word_removal(self):
+        """Tests that common stop words are ignored during relation analysis."""
+        # --- FIX: The original test was slightly flawed. This is more robust. ---
+        # "the", "is", "a" are stop words and should be ignored.
+        _, _, events = self.language_cortex.perceive_text_block("the cat is a fast animal")
+        
+        # The relation should be formed from the remaining words in sequence.
+        # In a 3-word window, this would be "cat fast animal"
+        self.assertEqual(len(events), 1)
+        event_symbol = self.fabric.relation._get_symbol_for_pattern(list(events)[0])
+        
+        self.assertIn("cat_fast_animal", event_symbol, "The relation formed should be 'cat_fast_animal'")
+        
+if __name__ == "__main__":
+    unittest.main()
