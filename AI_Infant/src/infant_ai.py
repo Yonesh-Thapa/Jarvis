@@ -1,50 +1,50 @@
 # full, runnable code here
-import time, threading, cv2, pickle, sys, random, queue
+import time, threading, sys, random, queue, os
 
 from .neural_fabric import NeuralFabric, PowerBudgetExceededError
-from .vision_cortex import VisionCortex
-from .audio_cortex import AudioCortex
+from .language_cortex import LanguageCortex
+from .knowledge_oracle import KnowledgeOracle
+from .web_browser import WebBrowser
+from .code_cortex import CodeCortex
+from .relational_cortex import RelationalCortex
 from .memory_core import MemoryCore
 from .logic_cortex import LogicCortex
 from .emotion_module import EmotionModule
+from .planning_cortex import PlanningCortex
 from .action_cortex import ActionCortex
-
-class ActionCortex:
-    def __init__(self, fabric: NeuralFabric, speech_queue: queue.Queue):
-        self.fabric = fabric; self.speech_queue = speech_queue; self._action_registry = {}
-        print("ActionCortex initialized.")
-    def register_action(self, symbol: str, function):
-        pattern = self.fabric.recall(symbol)
-        if pattern: self._action_registry[symbol] = {"pattern": pattern, "function": function}
-    def _speak_action(self, context_pattern: set):
-        text_to_speak = next((s.replace("_", " ") for s, p in self.fabric.symbol_table.items() if not s.startswith("action_") and p.issubset(context_pattern)), None)
-        if text_to_speak: self.speech_queue.put(text_to_speak); print(f"ACTION: Queuing speech for '{text_to_speak}'")
-    def step(self, fired_uids: set):
-        if not fired_uids: return
-        for symbol, action_data in self._action_registry.items():
-            action_pattern = action_data.get("pattern")
-            if action_pattern and action_pattern.issubset(fired_uids):
-                action_data["function"](fired_uids - action_pattern); break
 
 class InfantAI:
     def __init__(self):
         print("--- Bootstrapping Infant AI System ---")
         self.is_running = False
-        self.display_queue = queue.Queue(maxsize=2)
-        self.speech_queue = queue.Queue(maxsize=5)
+        self.state = "AWAKE"
         self._setup_components()
-        self.last_salient_pattern = frozenset()
         self.user_input_thread = threading.Thread(target=self._handle_user_input, daemon=True)
+        self.last_activity_time = time.time()
         
     def _setup_components(self):
-        self.fabric = NeuralFabric(max_neurons=50000, power_budget_watts=20.0)
-        self.fabric.add_neurons(n=64*48, zone='vision'); self.fabric.add_neurons(n=13*8, zone='audio'); self.fabric.add_neurons(n=1000, zone='general_association')
-        self.vision = VisionCortex(self.fabric, 'vision', input_resolution=(640, 480), grid_size=(64, 48))
-        self.audio = AudioCortex(self.fabric, 'audio')
+        self.fabric = NeuralFabric(max_neurons=100000, power_budget_watts=20.0)
+        self.fabric.add_neurons(n=10000, zone='language')
+        self.fabric.add_neurons(n=5000, zone='general_association')
+        self.fabric.add_neurons(n=100, zone='goal')
+        
         self.memory = MemoryCore(self.fabric, consolidation_threshold=3)
         self.logic = LogicCortex(self.fabric, self.memory)
+        self.fabric.logic = self.logic
+        
+        self.relational = RelationalCortex(self.fabric)
+        self.fabric.relation = self.relational
+        self.language = LanguageCortex(self.fabric, self.relational, 'language')
+        # --- FIX: Make language cortex available to other modules ---
+        self.fabric.language = self.language
+        
+        self.oracle = KnowledgeOracle()
+        self.browser = WebBrowser()
+        self.speech_queue = queue.Queue(maxsize=5)
+        self.code = CodeCortex(self.fabric, self.language)
         self.emotion = EmotionModule(self.fabric, self.memory)
-        self.action = ActionCortex(self.fabric, self.speech_queue)
+        self.action = ActionCortex(self.fabric, self.speech_queue, self.oracle, self.language, self.browser)
+        self.planning = PlanningCortex(self.fabric, self.logic, self.emotion, self.memory, self.action, self.language)
         print("\n--- All AI components initialized successfully. ---")
 
     def _handle_user_input(self):
@@ -55,66 +55,64 @@ class InfantAI:
                 command = input("> ").lower().strip().split()
                 if not command: continue
                 cmd, args = command[0], command[1:]
-                if cmd == 'help': print("Commands: bind, query, assess, do, status, quit")
-                elif cmd == 'bind' and args: self.logic.bind_symbol_to_pattern(args[0], self.last_salient_pattern)
-                elif cmd == 'query' and len(args) == 2: print(f"Association: {self.logic.query_association(args[0], args[1]):.2f}")
-                # --- START OF NEW COMMAND ---
-                elif cmd == 'associate' and len(args) >= 3 and args[1] == 'with':
-                    # e.g., associate black_charger with black charger
-                    new_symbol = args[0]
-                    existing_symbols = args[2:]
-                    self.logic.associate_concepts(new_symbol, existing_symbols, self.last_salient_pattern)
-                # --- END OF NEW COMMAND ---
-                elif cmd == 'assess' and args: self.emotion.assess(self.last_salient_pattern, float(args[0]))
-                elif cmd == 'do' and args: self.logic.execute_thought_sequence(args)
-                elif cmd == 'status': print(f"Valence: {self.emotion.get_current_valence():.2f}, Memories: {len(self.memory.consolidated_patterns)}")
+                self.last_activity_time = time.time()
+                if cmd == 'help': print("Commands: research, execute, learn, infer, query, status, quit")
+                elif cmd == 'research' and args:
+                    topic = ' '.join(args)
+                    topic_pattern, _ = self.language._get_or_create_pattern_for_word(topic)
+                    if topic_pattern: self.planning.add_curiosity_targets({topic_pattern})
+                elif cmd == 'execute' and args:
+                    file_path = args[0]
+                    if os.path.exists(file_path):
+                        with open(file_path, 'r', encoding='utf-8') as f:
+                            self.code.mentally_execute(f.read())
+                elif cmd == 'learn' and args:
+                    self.language.perceive_text_block(' '.join(args))
+                elif cmd == 'infer' and args:
+                    # The command itself is correct, the logic behind it was flawed.
+                    self.logic.perform_inference(args[0])
+                elif cmd == 'query' and len(args) == 2:
+                    print(f"Association between '{args[0]}' and '{args[1]}': {self.logic.query_association(args[0], args[1]):.2f}")
+                elif cmd == 'status': print(f"State: {self.state}, Valence: {self.emotion.get_current_valence():.2f}, Memories: {len(self.memory.consolidated_patterns)}, Active Goal: {self.planning.active_goal}, Curiosity Queue: {len(self.planning.curiosity_queue)}, Visited URLs: {len(self.planning.visited_urls)}")
                 elif cmd == 'quit': self.is_running = False; break
                 else: print("Unknown command.")
             except (KeyboardInterrupt, EOFError): self.is_running = False; break
             except Exception as e: print(f"Error processing command: {e}")
 
+    def _enter_resting_state(self):
+        self.state = "RESTING"; print("\n--- AI entered RESTING state. No new sensory input detected. ---")
+        self.memory.consolidate()
+        if self.memory.consolidated_patterns:
+            for _ in range(min(len(self.memory.consolidated_patterns), 3)):
+                self.memory.dream(); self.fabric.step_simulation()
+        self.memory.prune_synapses()
+        print("--- AI is returning to AWAKE state. ---\n")
+        self.state = "AWAKE"; self.last_activity_time = time.time()
+
     def live(self):
-        print("\nINFO: Running infant_ai.py with stable architecture.\n")
-        cap = None; self.is_running = True
+        # This method is unchanged, the fix is in the modules.
+        self.is_running = True
         try:
-            self.audio.start_stream(); self.user_input_thread.start()
-            action_speak_neurons = self.fabric.zones['general_association']
-            if len(action_speak_neurons) >= 5:
-                action_speak_pattern = set(random.sample(list(action_speak_neurons), 5))
-                self.logic.bind_symbol_to_pattern("action_speak", action_speak_pattern)
-                self.action.register_action("action_speak", self.action._speak_action)
-            
-            for i in range(4):
-                temp_cap = cv2.VideoCapture(i)
-                if temp_cap and temp_cap.isOpened():
-                    ret, frame = temp_cap.read()
-                    if ret and frame is not None: cap = temp_cap; print(f"SUCCESS: Camera found at index {i}."); break
-                    else: temp_cap.release()
-            
-            if not cap: raise RuntimeError("Could not find any working camera.")
-            
-            print("\n--- AI is now LIVE. Running perception loop... ---")
+            self.user_input_thread.start()
+            action_neurons = self.fabric.zones['general_association']
+            if len(action_neurons) >= 15:
+                ask_p = set(random.sample(list(action_neurons), 5)); self.logic.bind_symbol_to_pattern("action_ask_oracle", ask_p); self.action.register_action("action_ask_oracle", self.action._ask_oracle_action)
+                search_p = set(random.sample(list(action_neurons - ask_p), 5)); self.logic.bind_symbol_to_pattern("action_search_web", search_p); self.action.register_action("action_search_web", self.action._search_web_action)
+                browse_p = set(random.sample(list(action_neurons - ask_p - search_p), 5)); self.logic.bind_symbol_to_pattern("action_browse_page", browse_p); self.action.register_action("action_browse_page", self.action._browse_page_action)
+            print("\n--- AI is now a fully autonomous reasoning agent. ---")
             while self.is_running:
-                ret, frame = cap.read()
-                if not ret: time.sleep(0.01); continue
-                
-                self.vision.process_frame(frame)
-                fired_uids = self.fabric.step_simulation()
-                if len(fired_uids) > 5: self.last_salient_pattern = frozenset(fired_uids); self.memory.observe(self.last_salient_pattern)
-                self.action.step(fired_uids); self.emotion.step()
-                
-                display_frame = self.vision._frame_to_edges(frame)
-                cv2.putText(display_frame, f"Fired: {len(fired_uids)}", (10, 40), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255,255,255), 1)
-                try: self.display_queue.put_nowait(display_frame)
-                except queue.Full: pass
+                if time.time() - self.last_activity_time > 30.0 and self.state == "AWAKE": self._enter_resting_state()
+                if self.state == "AWAKE":
+                    self.emotion.step(); self.planning.step()
+                    self.last_activity_time = time.time()
+                    time.sleep(1)
+                else: time.sleep(1)
+        except PowerBudgetExceededError as e: print(f"CRITICAL: {e}. System is halting.")
         except Exception as e: print(f"FATAL ERROR in AI loop: {e}")
         finally:
-            self.is_running = False
-            if cap: cap.release()
-            self.display_queue.put(None); self.speech_queue.put(None)
+            self.is_running = False; self.state = "SHUTDOWN"
             print("INFO: AI thread has finished.")
-
+            
     def shutdown(self):
         print("\n--- Shutting down AI system... ---")
-        if self.audio.is_streaming: self.audio.stop_stream()
         print("Shutdown complete.")

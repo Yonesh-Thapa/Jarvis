@@ -1,106 +1,77 @@
 # full, runnable code here
-import pyttsx3
-import threading
-
+import queue
 from .neural_fabric import NeuralFabric
-from .logic_cortex import LogicCortex
+from .knowledge_oracle import KnowledgeOracle
+from .language_cortex import LanguageCortex
+from .web_browser import WebBrowser
 
 class ActionCortex:
-    """
-    Translates activated neural patterns into external actions, like speaking.
-    """
-    def __init__(self, fabric: NeuralFabric, logic_cortex: LogicCortex):
-        """
-        Initializes the Action Cortex.
-
-        Args:
-            fabric (NeuralFabric): The shared neural fabric.
-            logic_cortex (LogicCortex): The logic controller.
-        """
+    def __init__(self, fabric: NeuralFabric, speech_queue: queue.Queue, 
+                 oracle: KnowledgeOracle, language_cortex: LanguageCortex, browser: WebBrowser):
         self.fabric = fabric
-        self.logic = logic_cortex
-        
-        # Action registry: maps a symbol to a function and its required pattern.
+        self.speech_queue = speech_queue
+        self.oracle = oracle
+        self.language_cortex = language_cortex
+        self.browser = browser
         self._action_registry = {}
-        
-        # Setup offline Text-to-Speech engine
-        try:
-            self.tts_engine = pyttsx3.init()
-            print("ActionCortex initialized with TTS engine.")
-        except Exception as e:
-            self.tts_engine = None
-            print(f"WARNING: pyttsx3 initialization failed: {e}. Speech will be disabled.")
-            print("On Linux, you may need to run: sudo apt-get install espeak")
+        print("ActionCortex initialized.")
 
     def register_action(self, symbol: str, function):
-        """
-        Binds a symbolic pattern to a Python function.
-
-        Args:
-            symbol (str): The symbol representing the action (e.g., "action_speak").
-            function: The function to call when the action is triggered.
-        """
         pattern = self.fabric.recall(symbol)
-        if not pattern:
-            print(f"WARNING: Cannot register action '{symbol}'. Symbol not found in fabric.")
-            return
-        
-        self._action_registry[symbol] = {
-            "pattern": pattern,
-            "function": function
-        }
-        print(f"Action '{symbol}' registered.")
+        if pattern:
+            self._action_registry[symbol] = {"pattern": pattern, "function": function}
+            print(f"Action '{symbol}' registered.")
+
+    def _get_most_specific_symbol(self, context_pattern: set) -> str | None:
+        if not context_pattern: return None
+        best_symbol, max_subset_size = None, 0
+        for symbol, pattern in self.fabric.symbol_table.items():
+            if symbol.startswith(("action_", "goal_", "state_")): continue
+            if pattern.issubset(context_pattern) and len(pattern) > max_subset_size:
+                max_subset_size, best_symbol = len(pattern), symbol
+        return best_symbol
 
     def _speak_action(self, context_pattern: set):
-        """
-        The function executed for the 'action_speak' symbol.
+        symbol_to_speak = self._get_most_specific_symbol(context_pattern)
+        if symbol_to_speak:
+            text = symbol_to_speak.replace("_", " ")
+            self.speech_queue.put(text)
 
-        Args:
-            context_pattern (set): The other neurons firing alongside the action,
-                                   providing the context for what to say.
-        """
-        if not self.tts_engine:
-            print("ACTION: Speak (TTS disabled)")
-            return
-            
-        text_to_speak = ""
-        # Find a known symbol within the context pattern
-        for symbol, pattern in self.fabric.symbol_table.items():
-            if symbol.startswith("action_"): continue # Don't speak the action itself
-            
-            if pattern.issubset(context_pattern):
-                # We found the subject of the speech command!
-                text_to_speak = symbol.replace("_", " ") # speak "red cup" not "red_cup"
-                break
+    def _ask_oracle_action(self, context_pattern: set):
+        symbol_to_ask_about = self._get_most_specific_symbol(context_pattern)
+        prompt = f"What is a {symbol_to_ask_about.replace('_', ' ')}?" if symbol_to_ask_about else "What is this object?"
+        response = self.oracle.query_llm(prompt)
+        if response:
+            self.language_cortex.perceive_text_block(response)
+            self.speech_queue.put(prompt)
+
+    def _search_web_action(self, context_pattern: set):
+        symbol_to_search = self._get_most_specific_symbol(context_pattern)
+        if not symbol_to_search:
+            print("ACTION_FAIL: Search action had no topic in context.")
+            return []
         
-        if text_to_speak:
-            print(f"ACTION: Speaking '{text_to_speak}'")
-            # Run TTS in a separate thread to prevent blocking the main loop
-            threading.Thread(target=self._run_tts, args=(text_to_speak,), daemon=True).start()
-        else:
-            print("ACTION: Speak command received, but no known concept to speak about.")
+        query = symbol_to_search.replace('_', ' ').replace('word_', '')
+        urls = self.browser.search(query, num_results=1)
+        return urls
 
-    def _run_tts(self, text):
-        """Helper to run the blocking TTS calls."""
-        self.tts_engine.say(text)
-        self.tts_engine.runAndWait()
+    def _browse_page_action(self, context_pattern: set):
+        url_symbol = self._get_most_specific_symbol(context_pattern) # Assumes context is just the URL symbol
+        if not url_symbol:
+            print("ACTION_FAIL: Browse action had no URL in context.")
+            return None, []
+        
+        url = url_symbol.replace('url_', '').replace('_', '://').replace('__', '.') # Decode URL from symbol
+        text = self.browser.fetch_page_text(url)
+        links = self.browser.find_links(url)
+        return text, links
 
     def step(self, fired_uids: set):
-        """
-        Checks the currently fired neurons for any registered action patterns.
-        This should be called in the main AI loop.
-        """
-        if not fired_uids or not self._action_registry:
-            return
-
+        if not fired_uids or not self._action_registry: return None
         for symbol, action_data in self._action_registry.items():
             action_pattern = action_data["pattern"]
-            
-            # If the action pattern is a subset of what just fired...
             if action_pattern and action_pattern.issubset(fired_uids):
-                # ...execute the associated function.
-                # The context is all other neurons that fired simultaneously.
                 context = fired_uids - action_pattern
-                action_data["function"](context)
-                # Assume one action per step for simplicity
-                break
+                # Actions can now return results for the planner to use
+                return action_data["function"](context)
+        return None

@@ -1,157 +1,89 @@
-# full, runnable code here
 from collections import deque, Counter
 import random
-
 from src.neural_fabric import NeuralFabric
 
 class MemoryCore:
-    """
-    Orchestrates memory formation, consolidation, and recall within the NeuralFabric.
-    It operates by modifying synaptic weights, not by storing data itself.
-    """
     def __init__(self, fabric: NeuralFabric, consolidation_threshold: int = 3):
-        """
-        Initializes the Memory Core.
-
-        Args:
-            fabric (NeuralFabric): The shared neural fabric instance.
-            consolidation_threshold (int): How many times a pattern must be observed
-                                           in the recent past to be consolidated.
-        """
         self.fabric = fabric
-        
-        # A buffer of recently observed firing patterns (sets of UIDs).
-        # This acts as a short-term memory.
         self.short_term_memory = deque(maxlen=100)
-        
-        # A list of consolidated memory traces (patterns).
-        # In a real brain, this is implicitly stored, but we track it explicitly
-        # to enable dreaming and other meta-operations.
         self.consolidated_patterns = []
-        
         self.consolidation_threshold = consolidation_threshold
         print("MemoryCore initialized.")
 
     def observe(self, fired_uids: set):
-        """
-        Observes the latest set of fired neurons and adds it to short-term memory.
-        This should be called after every simulation step.
-        """
-        if len(fired_uids) > 1: # Ignore trivial activations
-            # We freeze the set to make it hashable for the Counter.
+        if len(fired_uids) > 1:
             self.short_term_memory.append(frozenset(fired_uids))
 
     def consolidate(self):
-        """
-        Scans short-term memory for salient patterns and strengthens their connections.
-        This is the core of memory formation (learning).
-        """
-        if not self.short_term_memory:
-            return
-
-        # --- Principle: Identify salient patterns ---
-        # Find patterns that have appeared frequently in our recent history.
+        if not self.short_term_memory: return
+        print("\n--- CONSOLIDATING MEMORIES ---")
         pattern_counts = Counter(self.short_term_memory)
-        
-        salient_patterns = [
-            p for p, count in pattern_counts.items() 
-            if count >= self.consolidation_threshold
-        ]
+        salient_patterns = [p for p, count in pattern_counts.items() if count >= self.consolidation_threshold]
 
         if not salient_patterns:
+            print("  - No patterns met the threshold for consolidation.")
             return
 
-        print(f"INFO: Found {len(salient_patterns)} salient patterns to consolidate.")
+        print(f"  - Found {len(salient_patterns)} salient patterns to consolidate.")
         for pattern in salient_patterns:
             self._strengthen_pattern(pattern)
             if pattern not in self.consolidated_patterns:
                 self.consolidated_patterns.append(pattern)
         
-        # Clear the buffer after consolidation to prevent re-consolidating the same events.
         self.short_term_memory.clear()
+        print("--- Consolidation complete. ---")
 
     def _strengthen_pattern(self, pattern_uids: frozenset):
-        """
-        Internal helper to strengthen synapses within a given pattern.
-        This creates a "cell assembly" where neurons are tightly bound.
-        """
-        # --- Principle: Neurons that fire together, wire together ---
         neuron_list = list(pattern_uids)
-        # For every pair of neurons in the pattern, create/strengthen a synapse.
         for i in range(len(neuron_list)):
             for j in range(i + 1, len(neuron_list)):
-                source_uid = neuron_list[i]
-                target_uid = neuron_list[j]
-                
-                # Create bidirectional connections to form a strong, auto-associative memory.
-                self.fabric.connect_neurons(source_uid, target_uid, weight=0.7)
-                self.fabric.connect_neurons(target_uid, source_uid, weight=0.7)
-        
-        print(f"  - Consolidated pattern of size {len(pattern_uids)}")
+                self.fabric.connect_neurons(neuron_list[i], neuron_list[j], weight=0.7)
+                self.fabric.connect_neurons(neuron_list[j], neuron_list[i], weight=0.7)
+        print(f"    - Consolidated pattern of size {len(pattern_uids)}")
 
+    def recognize_pattern(self, current_pattern: set, threshold: float = 0.7) -> frozenset | None:
+        if not self.consolidated_patterns or len(current_pattern) < 3: return None
+        best_match, max_similarity = None, 0.0
+        for known_pattern in self.consolidated_patterns:
+            intersection = len(current_pattern.intersection(known_pattern))
+            union = len(current_pattern.union(known_pattern))
+            if union == 0: continue
+            similarity = intersection / union
+            if similarity > max_similarity:
+                max_similarity, best_match = similarity, known_pattern
+        return best_match if max_similarity > threshold else None
 
     def recall(self, cue_uids: set, activation_strength: float = 0.6) -> set:
-        """
-        Given a partial cue, attempts to activate the full memory pattern.
-        
-        Args:
-            cue_uids (set): A small subset of neurons from a memory pattern.
-            activation_strength (float): The signal strength to propagate to associated neurons.
-            
-        Returns:
-            set: The set of neurons that were excited by the recall mechanism.
-        """
-        if not cue_uids:
-            return set()
-            
+        if not cue_uids: return set()
         excited_neurons = set()
-        # For each neuron in the cue...
         for uid in cue_uids:
-            # ...find all neurons it has a strong connection to.
             for target_uid, synapse in self.fabric.synapses.get(uid, {}).items():
-                if synapse.weight > 0.5: # Threshold for a 'strong' connection
+                if synapse.weight > 0.5:
                     self.fabric.neurons[target_uid].receive_signal(activation_strength)
                     excited_neurons.add(target_uid)
-        
         print(f"INFO: Recall cue of size {len(cue_uids)} excited {len(excited_neurons)} neurons.")
         return excited_neurons
         
     def dream(self):
-        """
-        Replays a random consolidated memory to further strengthen it.
-        This is an offline, low-power consolidation mechanism.
-        """
-        if not self.consolidated_patterns:
-            return
-            
-        # Pick a random memory to replay.
+        if not self.consolidated_patterns: return
         dream_pattern = random.choice(self.consolidated_patterns)
-        
         print(f"INFO: Dreaming... replaying a memory of size {len(dream_pattern)}.")
-        
-        # Activate the pattern in the fabric. The subsequent `step_simulation`
-        # will trigger Hebbian learning, further reinforcing the synapses.
         self.fabric.activate_pattern(dream_pattern, signal_strength=1.1)
 
     def prune_synapses(self, prune_threshold=0.05, prune_factor=0.99):
-        """
-        Weakens all synapses slightly and removes very weak ones.
-        This is the 'forgetting' mechanism.
-        """
+        print("\n--- PRUNING WEAK SYNAPSES ---")
         pruned_count = 0
         synapses_to_prune = []
-
-        for source_uid, targets in self.fabric.synapses.items():
-            for target_uid, synapse in targets.items():
-                # Decay the weight
-                synapse.weight *= prune_factor
-                # Mark for deletion if below threshold
-                if synapse.weight < prune_threshold:
-                    synapses_to_prune.append((source_uid, target_uid))
-
+        with self.fabric.synapse_lock:
+            for source_uid, targets in self.fabric.synapses.items():
+                for target_uid, synapse in targets.items():
+                    synapse.weight *= prune_factor
+                    if synapse.weight < prune_threshold:
+                        synapses_to_prune.append((source_uid, target_uid))
         for source_uid, target_uid in synapses_to_prune:
-            del self.fabric.synapses[source_uid][target_uid]
-            pruned_count += 1
-            
-        if pruned_count > 0:
-            print(f"INFO: Pruned {pruned_count} weak synapses.")
+            if source_uid in self.fabric.synapses and target_uid in self.fabric.synapses[source_uid]:
+                del self.fabric.synapses[source_uid][target_uid]
+                pruned_count += 1
+        if pruned_count > 0: print(f"  - Pruned {pruned_count} weak synaptic connections.")
+        else: print("  - No synapses were weak enough to be pruned.")
+        print("--- Pruning complete. ---")

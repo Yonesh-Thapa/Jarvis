@@ -1,0 +1,9 @@
+opencv-python
+numpy
+pyaudio
+librosa
+networkx
+pyttsx3
+openai
+requests
+beautifulsoup4
